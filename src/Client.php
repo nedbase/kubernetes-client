@@ -21,7 +21,6 @@ use Http\Message\RequestFactory as HttpRequestFactory;
 use Http\Discovery\HttpClientDiscovery;
 use Http\Discovery\MessageFactoryDiscovery as HttpMessageFactoryDiscovery;
 
-use React\EventLoop\Factory as ReactFactory;
 use React\Socket\Connector as ReactSocketConnector;
 use Ratchet\Client\Connector as WebSocketConnector;
 use Maclof\Kubernetes\Repositories\CertificateRepository;
@@ -449,20 +448,8 @@ class Client
 			$jsonResponse = json_decode($responseBody, true);
 
 			return is_array($jsonResponse) ? $jsonResponse : $responseBody;
-		} catch (\Exception $e) {
-			$response = $e->getResponse();
-
-			$responseBody = (string) $response->getBody();
-
-			if (in_array('application/json', $response->getHeader('Content-Type'), true)) {
-				$jsonResponse = json_decode($responseBody, true);
-
-				if ($this->isUpgradeRequestRequired($jsonResponse)) {
-					return $this->sendUpgradeRequest($baseUri . $uri, $query);
-				}
-			}
-
-			throw new BadRequestException($responseBody, 0, $e);
+		} catch (HttpTransferException $e) {
+			throw new BadRequestException($e->getMessage(), 0, $e);
 		}
 	}
 
