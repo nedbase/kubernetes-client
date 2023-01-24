@@ -1,8 +1,11 @@
 <?php namespace Maclof\Kubernetes;
 
 use Exception;
+use React\EventLoop\Loop;
 use InvalidArgumentException;
 use BadMethodCallException;
+use Ratchet\Client\WebSocket;
+use Ratchet\RFC6455\Messaging\MessageInterface;
 use Maclof\Kubernetes\Exceptions\ApiServerException;
 use Maclof\Kubernetes\Repositories\RoleBindingRepository;
 use Maclof\Kubernetes\Repositories\RoleRepository;
@@ -18,7 +21,6 @@ use Http\Message\RequestFactory as HttpRequestFactory;
 use Http\Discovery\HttpClientDiscovery;
 use Http\Discovery\MessageFactoryDiscovery as HttpMessageFactoryDiscovery;
 
-use React\EventLoop\Factory as ReactFactory;
 use React\Socket\Connector as ReactSocketConnector;
 use Ratchet\Client\Connector as WebSocketConnector;
 use Maclof\Kubernetes\Repositories\CertificateRepository;
@@ -162,6 +164,9 @@ class Client
 		if ($reset) {
 			$this->master = null;
 			$this->verify = null;
+			$this->caCert = null;
+			$this->clientCert = null;
+			$this->clientKey = null;
 			$this->token = null;
 			$this->username = null;
 			$this->password = null;
@@ -170,6 +175,17 @@ class Client
 
 		if (isset($options['master'])) {
 			$this->master = $options['master'];
+		}
+		if (isset($options['verify'])) {
+			$this->verify = $options['verify'];
+		} elseif (isset($options['ca_cert'])) {
+			$this->caCert = $options['ca_cert'];
+		}
+		if (isset($options['client_cert'])) {
+			$this->clientCert = $options['client_cert'];
+		}
+		if (isset($options['client_key'])) {
+			$this->clientKey = $options['client_key'];
 		}
 		if (isset($options['token'])) {
 			$this->token = $options['token'];
@@ -187,7 +203,7 @@ class Client
 
 	/**
 	 * Parse a kubeconfig.
-	 * 
+	 *
 	 * @param  string|array $content Mixed type, based on the second input argument
 	 * @throws \InvalidArgumentException
 	 */
@@ -309,7 +325,7 @@ class Client
 
 	/**
 	 * Parse a kubeconfig file.
-	 * 
+	 *
 	 * @throws \InvalidArgumentException
 	 */
 	public static function parseKubeconfigFile(string $filePath): array
@@ -328,7 +344,7 @@ class Client
 	{
 		$fileName = 'kubernetes-client-' . $fileName;
 
-		$tempFilePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR  . $fileName;
+		$tempFilePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $fileName;
 
 		if (file_put_contents($tempFilePath, $fileContent) === false) {
 			throw new Exception('Failed to write content to temp file: ' . $tempFilePath);
@@ -373,7 +389,7 @@ class Client
 		if ($namespace) {
 			$baseUri .= '/namespaces/' . $this->namespace;
 		}
-		
+
 		if ($uri === '/healthz' || $uri === '/version') {
 			$requestUrl = $this->master . '/' . $uri;
 		} else {
@@ -415,6 +431,15 @@ class Client
 				throw new ApiServerException("Authentication Exception: " . $msg, $response->getStatusCode());
 			}
 
+			if ($response->getStatusCode() === 400) {
+				$responseBody = (string) $response->getBody();
+				$jsonResponse = json_decode($responseBody, true);
+
+				if ($this->isUpgradeRequestRequired($jsonResponse)) {
+					return $this->sendUpgradeRequest($baseUri . $uri, $query);
+				}
+			}
+
 			if (isset($requestOptions['stream']) && $requestOptions['stream'] === true) {
 				return $response;
 			}
@@ -424,19 +449,7 @@ class Client
 
 			return is_array($jsonResponse) ? $jsonResponse : $responseBody;
 		} catch (HttpTransferException $e) {
-			$response = $e->getResponse();
-
-			$responseBody = (string) $response->getBody();
-
-			if (in_array('application/json', $response->getHeader('Content-Type'), true)) {
-				$jsonResponse = json_decode($responseBody, true);
-
-				if ($this->isUpgradeRequestRequired($jsonResponse)) {
-					return $this->sendUpgradeRequest($requestUrl, $query);
-				}
-			}
-
-			throw new BadRequestException($responseBody, 0, $e);
+			throw new BadRequestException($e->getMessage(), 0, $e);
 		}
 	}
 
@@ -453,7 +466,7 @@ class Client
 	 */
 	protected function sendUpgradeRequest(string $requestUri, array $query): array
 	{
-		$fullUrl = $this->master .'/' . $requestUri . '?' . implode('&', $this->parseQueryParams($query));
+		$fullUrl = $this->master . '/' . $requestUri . '?' . implode('&', $this->parseQueryParams($query));
 		if (parse_url($fullUrl, PHP_URL_SCHEME) === 'https') {
 			$fullUrl = str_replace('https://', 'wss://', $fullUrl);
 		} else {
@@ -491,34 +504,31 @@ class Client
 			$socketOptions['tls']['local_pk'] = $this->clientKey;
 		}
 
-		$loop = ReactFactory::create();
-
-		$socketConnector = new ReactSocketConnector($loop, $socketOptions);
-
+		$socketConnector = new ReactSocketConnector($socketOptions);
+		$loop = Loop::get();
 		$wsConnector = new WebSocketConnector($loop, $socketConnector);
-
-		$connPromise = $wsConnector($fullUrl, ['base64.channel.k8s.io'], $headers);
 
 		$wsConnection = null;
 		$messages = [];
 
-		$connPromise->then(function ($conn) use (&$wsConnection, &$messages) {
-			$wsConnection = $conn;
+		$wsConnector($fullUrl, ['base64.channel.k8s.io'], $headers)
+			->then(function (WebSocket $conn) use (&$wsConnection, &$messages) {
+				$wsConnection = $conn;
 
-			$conn->on('message', function ($message) use (&$messages) {
-				$data = $message->getPayload();
+				$conn->on('message', function (MessageInterface $message) use (&$messages) {
+					$data = $message->getPayload();
 
-				$channel = $this->execChannels[substr($data, 0, 1)];
-				$message = base64_decode(substr($data, 1));
+					$channel = $this->execChannels[substr($data, 0, 1)];
+					$message = base64_decode(substr($data, 1));
 
-				$messages[] = [
-					'channel' => $channel,
-					'message' => $message,
-				];
+					$messages[] = [
+						'channel' => $channel,
+						'message' => $message,
+					];
+				});
+			}, function ($e) {
+				throw new BadRequestException('Websocket Exception', 0, $e);
 			});
-		}, function ($e) {
-			throw new BadRequestException('Websocket Exception', 0, $e);
-		});
 
 		$loop->run();
 
@@ -560,7 +570,7 @@ class Client
 	{
 		return $this->sendRequest('GET', '/healthz');
 	}
-	
+
 	/**
 	 * Check the version.
 	 */
@@ -568,7 +578,7 @@ class Client
 	{
 		return $this->sendRequest('GET', '/version');
 	}
-	
+
 	/**
 	 * Magic call method to grab a class instance.
 	 *
