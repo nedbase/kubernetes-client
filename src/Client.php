@@ -1,6 +1,8 @@
 <?php namespace Maclof\Kubernetes;
 
 use Exception;
+use Http\Discovery\Psr17FactoryDiscovery;
+use Http\Discovery\Psr18ClientDiscovery;
 use InvalidArgumentException;
 use BadMethodCallException;
 use Maclof\Kubernetes\Exceptions\ApiServerException;
@@ -8,6 +10,7 @@ use Maclof\Kubernetes\Repositories\RoleBindingRepository;
 use Maclof\Kubernetes\Repositories\RoleRepository;
 use Maclof\Kubernetes\Repositories\ServiceAccountRepository;
 use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\StreamFactoryInterface;
 use Symfony\Component\Yaml\Yaml;
 use Symfony\Component\Yaml\Exception\ParseException as YamlParseException;
 
@@ -15,8 +18,6 @@ use Http\Client\Common\HttpMethodsClient;
 use Http\Client\Common\HttpMethodsClientInterface;
 use Http\Client\Exception\TransferException as HttpTransferException;
 use Http\Message\RequestFactory as HttpRequestFactory;
-use Http\Discovery\HttpClientDiscovery;
-use Http\Discovery\MessageFactoryDiscovery as HttpMessageFactoryDiscovery;
 
 use React\EventLoop\Factory as ReactFactory;
 use React\Socket\Connector as ReactSocketConnector;
@@ -144,13 +145,14 @@ class Client
 	/**
 	 * The constructor.
 	 */
-	public function __construct(array $options = [], RepositoryRegistry $repositoryRegistry = null, ClientInterface $httpClient = null, HttpRequestFactory $httpRequestFactory = null)
+	public function __construct(array $options = [], RepositoryRegistry $repositoryRegistry = null, ClientInterface $httpClient = null, HttpRequestFactory $httpRequestFactory = null, StreamFactoryInterface $streamFactory = null)
 	{
 		$this->setOptions($options);
 		$this->classRegistry = $repositoryRegistry ?: new RepositoryRegistry();
 		$this->httpClient = new HttpMethodsClient(
-			$httpClient ?: HttpClientDiscovery::find(),
-			$httpRequestFactory ?: HttpMessageFactoryDiscovery::find()
+			$httpClient ?: Psr18ClientDiscovery::find(),
+			$httpRequestFactory ?: Psr17FactoryDiscovery::findRequestFactory(),
+			$streamFactory ?: Psr17FactoryDiscovery::findStreamFactory()
 		);
 	}
 
