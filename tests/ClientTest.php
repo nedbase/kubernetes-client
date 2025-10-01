@@ -8,8 +8,6 @@ use Nyholm\Psr7\Factory\Psr17Factory;
 use Nyholm\Psr7\Response;
 use Psr\Http\Client\ClientInterface;
 
-use function method_exists;
-
 class ClientTest extends TestCase
 {
 	public function testSendRequestJsonParsesResponse(): void
@@ -21,7 +19,7 @@ class ClientTest extends TestCase
 		]);
 
 		$mockClientInterface = $this->getMockBuilder(ClientInterface::class)
-			->setMethods(['sendRequest'])
+			->onlyMethods(['sendRequest'])
 			->getMock();
 
 		$jsonBody = json_encode([
@@ -65,7 +63,7 @@ class ClientTest extends TestCase
 		$httpClientProp->setAccessible(true);
 
 		$mockHttpMethodsClient = $this->getMockBuilder(HttpMethodsMockClient::class)
-			->setMethods(['send'])
+			->onlyMethods(['send'])
 			->getMock();
 
 		$jsonBody = json_encode($mockResponseData);
