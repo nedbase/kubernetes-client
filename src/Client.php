@@ -383,7 +383,7 @@ class Client
 	 * @throws \Maclof\Kubernetes\Exceptions\BadRequestException
 	 */
 	#[\ReturnTypeWillChange]
-	public function sendRequest(string $method, string $uri, array $query = [], $body = null, bool $namespace = true, string $apiVersion = null, array $requestOptions = [])
+	public function sendRequest(string $method, string $uri, array $query = [], $body = null, bool $namespace = true, ?string $apiVersion = null, array $requestOptions = [])
 	{
 		$baseUri = $apiVersion ? ('apis/' . $apiVersion) : ('api/' . $this->apiVersion);
 		if ($namespace && !empty($this->namespace)) {
